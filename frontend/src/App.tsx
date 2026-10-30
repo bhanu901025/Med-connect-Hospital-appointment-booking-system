@@ -32,6 +32,7 @@ interface Doctor {
   languages: string;
   location: string;
   availableToday: number;
+  status?: 'pending' | 'approved' | 'rejected';
 }
 
 interface Appointment {
@@ -52,6 +53,7 @@ interface Appointment {
   fee: number;
   notes?: string;
   prescription?: string;
+  rescheduleHistory?: any[];
 }
 
 interface Review {
@@ -241,6 +243,14 @@ export default function App(){
     prescription: ''
   });
 
+  // Reschedule Appointment Modal
+  const [rescheduleModal, setRescheduleModal] = useState<{ open: boolean; appt: Appointment|null; newDate: string; newTime: string|null }>({
+    open: false,
+    appt: null,
+    newDate: generateDates()[0].iso,
+    newTime: null
+  });
+
   // Patient appointments filter
   const [apptFilterStatus, setApptFilterStatus] = useState<'all'|'upcoming'|'completed'|'cancelled'>('all');
 
@@ -428,6 +438,12 @@ export default function App(){
 
   const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      showToast('Please sign in or create an account to book an appointment', 'info');
+      openAuthModal('patient', 'login');
+      return;
+    }
+
     if (!selectedDoctor || !bookingTime) {
       showToast('Please select a doctor and time slot', 'error');
       return;
@@ -473,6 +489,38 @@ export default function App(){
       if (user) loadAppointments(user);
     } else {
       showToast(res.error || 'Could not cancel appointment', 'error');
+    }
+  };
+
+  const handleRescheduleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rescheduleModal.appt || !rescheduleModal.newTime) {
+      showToast('Please select a new appointment time slot', 'error');
+      return;
+    }
+
+    const res = await apiPatch(`/appointments/${rescheduleModal.appt.id}/reschedule`, {
+      newDate: rescheduleModal.newDate,
+      newTime: rescheduleModal.newTime
+    });
+
+    if (res.success) {
+      showToast('Appointment rescheduled successfully!', 'success');
+      setRescheduleModal({ open: false, appt: null, newDate: generateDates()[0].iso, newTime: null });
+      if (user) loadAppointments(user);
+    } else {
+      showToast(res.error || 'Failed to reschedule appointment', 'error');
+    }
+  };
+
+  const handleUpdateDoctorStatus = async (docId: string, status: 'approved' | 'rejected' | 'pending') => {
+    const res = await apiPatch(`/admin/doctors/${docId}/status`, { status });
+    if (res.success) {
+      showToast(`Doctor verification updated to ${status}`, 'success');
+      loadDoctors();
+      if (user?.role === 'admin') loadAdminData();
+    } else {
+      showToast(res.error || 'Failed to update doctor verification status', 'error');
     }
   };
 
@@ -901,12 +949,20 @@ export default function App(){
                       )}
 
                       {appt.status === 'upcoming' && (
-                        <button 
-                          onClick={() => handleCancelAppointment(appt.id)}
-                          className="px-4 py-2 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold cursor-pointer"
-                        >
-                          Cancel Booking
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => setRescheduleModal({ open: true, appt, newDate: generateDates()[0].iso, newTime: null })}
+                            className="px-3.5 py-2 rounded-xl bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Calendar className="w-3.5 h-3.5 text-teal-600" /> Reschedule
+                          </button>
+                          <button 
+                            onClick={() => handleCancelAppointment(appt.id)}
+                            className="px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold cursor-pointer"
+                          >
+                            Cancel Booking
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1218,13 +1274,38 @@ export default function App(){
                         </div>
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
-                        <button 
-                          onClick={() => handleDeleteDoctor(doc.id)}
-                          className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" /> Remove Doctor
-                        </button>
+                      <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          (doc.status || 'approved') === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                          (doc.status === 'pending') ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                          'bg-rose-50 text-rose-700 border border-rose-200'
+                        }`}>
+                          {doc.status || 'approved'}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {(doc.status === 'pending' || doc.status === 'rejected') && (
+                            <button
+                              onClick={() => handleUpdateDoctorStatus(doc.id, 'approved')}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-[11px] font-bold cursor-pointer"
+                            >
+                              Approve
+                            </button>
+                          )}
+                          {doc.status === 'pending' && (
+                            <button
+                              onClick={() => handleUpdateDoctorStatus(doc.id, 'rejected')}
+                              className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 text-[11px] font-bold cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => handleDeleteDoctor(doc.id)}
+                            className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" /> Remove
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1900,6 +1981,95 @@ export default function App(){
                 </button>
                 <button type="submit" className="w-2/3 py-3 rounded-xl bg-[#0E7C8C] text-white font-bold text-xs hover:bg-[#0A626F] cursor-pointer">
                   Save Availability
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* RESCHEDULE APPOINTMENT MODAL */}
+      {rescheduleModal.open && rescheduleModal.appt && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 border border-slate-200 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-extrabold text-slate-900">Reschedule Appointment</h3>
+                <p className="text-slate-500 text-xs mt-0.5">
+                  Doctor: <strong className="text-slate-800">{rescheduleModal.appt.doctorName || 'Medical Specialist'}</strong> | Current: {rescheduleModal.appt.date} at {rescheduleModal.appt.time}
+                </p>
+              </div>
+              <button 
+                onClick={() => setRescheduleModal({ open: false, appt: null, newDate: generateDates()[0].iso, newTime: null })} 
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleRescheduleSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-2">Select New Date</label>
+                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+                  {generateDates().map((d) => (
+                    <button
+                      type="button"
+                      key={d.iso}
+                      onClick={() => setRescheduleModal(prev => ({ ...prev, newDate: d.iso, newTime: null }))}
+                      className={`flex-shrink-0 px-3.5 py-2.5 rounded-2xl border text-center transition-all cursor-pointer ${
+                        rescheduleModal.newDate === d.iso
+                          ? 'border-[#0E7C8C] bg-[#0E7C8C] text-white shadow-sm'
+                          : 'border-slate-200 hover:border-slate-300 text-slate-700 bg-white'
+                      }`}
+                    >
+                      <p className="text-[10px] font-bold uppercase">{d.dayName}</p>
+                      <p className="text-sm font-black">{d.dayNum}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-2">Select New Time Slot</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[...TIME_SLOTS.morning, ...TIME_SLOTS.afternoon, ...TIME_SLOTS.evening].map((slot) => {
+                    const booked = isSlotBooked(rescheduleModal.appt!.doctorId, rescheduleModal.newDate, slot);
+                    const selected = rescheduleModal.newTime === slot;
+                    return (
+                      <button
+                        type="button"
+                        key={slot}
+                        disabled={booked}
+                        onClick={() => setRescheduleModal(prev => ({ ...prev, newTime: slot }))}
+                        className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          booked 
+                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed line-through'
+                            : selected
+                            ? 'bg-[#0E7C8C] text-white shadow-sm'
+                            : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
+                        }`}
+                      >
+                        {slot}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setRescheduleModal({ open: false, appt: null, newDate: generateDates()[0].iso, newTime: null })}
+                  className="w-1/3 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!rescheduleModal.newTime}
+                  className="w-2/3 py-2.5 rounded-xl bg-[#0E7C8C] text-white font-bold text-xs hover:bg-[#0A626F] disabled:opacity-50 cursor-pointer shadow-md shadow-[#0E7C8C]/20"
+                >
+                  Confirm Reschedule
                 </button>
               </div>
             </form>

@@ -195,4 +195,75 @@ router.get('/assignments', protect, authorize('admin'), async (req, res, next) =
   }
 });
 
+// GET /api/admin/doctors - Admin view of all doctors including status (pending, approved, rejected)
+router.get('/doctors', protect, authorize('admin'), async (req, res, next) => {
+  try {
+    const { status } = req.query;
+
+    if (mongoose.connection.readyState === 1) {
+      const query = status ? { status } : {};
+      const doctors = await Doctor.find(query).sort({ createdAt: -1 });
+      return res.json({ success: true, doctors });
+    }
+
+    if (isMysqlConnected()) {
+      let sql = 'SELECT * FROM doctors';
+      const params = [];
+      if (status) {
+        sql += ' WHERE status = ?';
+        params.push(status);
+      }
+      sql += ' ORDER BY createdAt DESC';
+      const doctors = await dbQuery(sql, params);
+      return res.json({ success: true, doctors });
+    }
+
+    let docs = [...memoryStore.doctors];
+    if (status) {
+      docs = docs.filter(d => (d.status || 'approved') === status);
+    }
+    res.json({ success: true, doctors: docs });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/admin/doctors/:id/status - Doctor verification & approval workflow
+router.patch('/doctors/:id/status', protect, authorize('admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Invalid status. Allowed values are 'pending', 'approved', 'rejected'" 
+      });
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      const doc = await Doctor.findOneAndUpdate({ id }, { status }, { new: true });
+      if (!doc) return res.status(404).json({ success: false, error: 'Doctor not found' });
+      return res.json({ success: true, message: `Doctor status updated to ${status}`, doctor: doc });
+    }
+
+    if (isMysqlConnected()) {
+      await dbQuery('UPDATE doctors SET status = ? WHERE id = ?', [status, id]);
+      const rows = await dbQuery('SELECT * FROM doctors WHERE id = ?', [id]);
+      if (rows.length === 0) return res.status(404).json({ success: false, error: 'Doctor not found' });
+      return res.json({ success: true, message: `Doctor status updated to ${status}`, doctor: rows[0] });
+    }
+
+    const doc = memoryStore.doctors.find(d => d.id === id);
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'Doctor not found' });
+    }
+
+    doc.status = status;
+    res.json({ success: true, message: `Doctor status updated to ${status}`, doctor: doc });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

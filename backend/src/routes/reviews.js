@@ -2,6 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import Review from '../models/Review.js';
 import Doctor from '../models/Doctor.js';
+import Appointment from '../models/Appointment.js';
 import { protect } from '../middleware/auth.js';
 import { isMysqlConnected, dbQuery, memoryStore } from '../services/mysqlDb.js';
 
@@ -18,8 +19,45 @@ router.post('/', protect, async (req, res, next) => {
 
     const numRating = Math.max(1, Math.min(5, Number(rating)));
     const reviewId = 'rev-' + Date.now();
-    const patientEmail = req.user.email;
+    const patientEmail = req.user.email.toLowerCase().trim();
     const patientName = req.user.name;
+
+    // 1. Verify that appointment exists, is completed, and belongs to the patient
+    let appt = null;
+
+    if (mongoose.connection.readyState === 1) {
+      appt = await Appointment.findOne({ id: appointmentId });
+    } else if (isMysqlConnected()) {
+      const rows = await dbQuery('SELECT * FROM appointments WHERE id = ?', [appointmentId]);
+      if (rows.length > 0) appt = rows[0];
+    } else {
+      appt = memoryStore.appointments.find(a => a.id === appointmentId);
+    }
+
+    if (!appt) {
+      return res.status(404).json({ success: false, error: 'Appointment not found' });
+    }
+
+    if (appt.patientEmail.toLowerCase() !== patientEmail && req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Forbidden: You can only review appointments that you attended' 
+      });
+    }
+
+    if (appt.status !== 'completed') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Reviews can only be submitted for completed appointments' 
+      });
+    }
+
+    if (appt.doctorId !== doctorId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Doctor ID does not match the assigned appointment' 
+      });
+    }
 
     // MongoDB Atlas
     if (mongoose.connection.readyState === 1) {

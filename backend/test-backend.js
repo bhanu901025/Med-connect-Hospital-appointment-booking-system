@@ -42,7 +42,7 @@ function request(method, path, body = null, token = null) {
 }
 
 async function runTests() {
-  console.log('🧪 Starting E2E MedConnect Backend Test Suite...\n');
+  console.log('🧪 Starting Comprehensive E2E MedConnect Security & Workflow Test Suite...\n');
   let passed = 0;
   let failed = 0;
 
@@ -102,8 +102,8 @@ async function runTests() {
     }
   });
 
-  // 5. GET Doctors List
-  await assert('GET /api/doctors returns doctor array', async () => {
+  // 5. GET Doctors List (Approved Only)
+  await assert('GET /api/doctors returns approved doctor array', async () => {
     const res = await request('GET', '/api/doctors');
     if (res.status !== 200 || !Array.isArray(res.body)) {
       throw new Error(`Expected array of doctors, got ${res.status} ${JSON.stringify(res.body)}`);
@@ -139,7 +139,6 @@ async function runTests() {
     adminToken = res.body.token;
   });
 
-
   // 9. Admin Add Doctor
   const testDocId = 'test_doc_' + Date.now();
   await assert('POST /api/doctors adds a new doctor (Admin)', async () => {
@@ -150,7 +149,8 @@ async function runTests() {
       hospital: 'Test City Hospital',
       fee: 950,
       experience: 10,
-      location: 'Mumbai'
+      location: 'Mumbai',
+      status: 'approved'
     }, adminToken);
 
     if (res.status !== 201 || !res.body.success) {
@@ -166,14 +166,15 @@ async function runTests() {
     }
   });
 
-  // 11. Book Appointment
-  const bookApptId = 'test_ap_' + Date.now();
+  // 11. Book Appointment (Authenticated)
+  let bookedApptId = '';
   const testDate = `2026-11-${Math.floor(Math.random()*20+1).toString().padStart(2, '0')}`;
-  await assert('POST /api/appointments/book creates appointment', async () => {
+  const testTime = '02:30 PM';
+  await assert('POST /api/appointments/book creates appointment with auth', async () => {
     const res = await request('POST', '/api/appointments/book', {
       doctorId: 'd2',
       date: testDate,
-      time: '02:30 PM',
+      time: testTime,
       patientEmail: testEmail,
       patientName: 'Test Patient',
       patientPhone: '+91 99999 88888',
@@ -182,21 +183,128 @@ async function runTests() {
       fee: 1500
     }, newAuthToken);
 
-
     if (res.status !== 201 || !res.body.success) {
       throw new Error(`Booking failed: ${res.status} ${JSON.stringify(res.body)}`);
     }
+    bookedApptId = res.body.data.id;
   });
 
-  // 12. GET My Appointments
-  await assert('GET /api/appointments/my/:email retrieves booked appointments', async () => {
+  // 12. Slot Protection: Prevent duplicate booking of same slot
+  await assert('POST /api/appointments/book prevents duplicate booking (409 Conflict)', async () => {
+    const res = await request('POST', '/api/appointments/book', {
+      doctorId: 'd2',
+      date: testDate,
+      time: testTime,
+      patientEmail: 'other@demo.com',
+      patientName: 'Other Patient'
+    }, newAuthToken);
+
+    if (res.status !== 409) {
+      throw new Error(`Expected status 409 for duplicate slot, got ${res.status}: ${JSON.stringify(res.body)}`);
+    }
+  });
+
+  // 13. Security: Unauthenticated access to /api/appointments/my/:email is rejected
+  await assert('GET /api/appointments/my/:email rejects unauthenticated requests (401)', async () => {
     const res = await request('GET', `/api/appointments/my/${testEmail}`);
+    if (res.status !== 401) {
+      throw new Error(`Expected status 401 without token, got ${res.status}`);
+    }
+  });
+
+  // 14. Security: Access to another patient appointments is rejected (403)
+  await assert('GET /api/appointments/my/:email rejects unauthorized patient (403)', async () => {
+    const res = await request('GET', '/api/appointments/my/patient@demo.com', null, newAuthToken);
+    if (res.status !== 403) {
+      throw new Error(`Expected status 403 when viewing another user appts, got ${res.status}`);
+    }
+  });
+
+  // 15. Authenticated patient retrieves own appointments
+  await assert('GET /api/appointments/my/:email retrieves own appointments with token', async () => {
+    const res = await request('GET', `/api/appointments/my/${testEmail}`, null, newAuthToken);
     if (res.status !== 200 || !Array.isArray(res.body) || res.body.length === 0) {
       throw new Error(`Expected appointments for ${testEmail}, got ${res.status} ${JSON.stringify(res.body)}`);
     }
   });
 
-  // 13. Admin GET Stats
+  // 16. Doctor login
+  let doctorToken = '';
+  await assert('POST /api/auth/login logs in demo doctor (Dr. Sarah Mitchell, d1)', async () => {
+    const res = await request('POST', '/api/auth/login', {
+      email: 'doctor@demo.com',
+      password: 'demo123'
+    });
+    if (res.status !== 200 || !res.body.token) {
+      throw new Error(`Doctor login failed: ${res.status}`);
+    }
+    doctorToken = res.body.token;
+  });
+
+  // 17. Security: Doctor cannot update clinical records for an unassigned appointment (403)
+  await assert('PATCH /api/appointments/:id/clinical rejects unassigned doctor (403)', async () => {
+    // Dr. Sarah is d1, but bookedApptId is for d2
+    const res = await request('PATCH', `/api/appointments/${bookedApptId}/clinical`, {
+      notes: 'Unauthorized notes attempt',
+      prescription: 'Unauthorized prescription attempt'
+    }, doctorToken);
+
+    if (res.status !== 403) {
+      throw new Error(`Expected 403 for unassigned doctor clinical update, got ${res.status}`);
+    }
+  });
+
+  // 18. Security: Doctor cannot update another doctor profile (403)
+  await assert('PUT /api/doctors/:id rejects doctor editing another profile (403)', async () => {
+    const res = await request('PUT', '/api/doctors/d2', {
+      fee: 2500
+    }, doctorToken);
+
+    if (res.status !== 403) {
+      throw new Error(`Expected 403 when doctor updates another profile, got ${res.status}`);
+    }
+  });
+
+  // 19. Appointment Rescheduling Workflow
+  const newRescheduleDate = `2026-11-${Math.floor(Math.random()*20+1).toString().padStart(2, '0')}`;
+  const newRescheduleTime = '04:00 PM';
+  await assert('PATCH /api/appointments/:id/reschedule reschedules appointment', async () => {
+    const res = await request('PATCH', `/api/appointments/${bookedApptId}/reschedule`, {
+      newDate: newRescheduleDate,
+      newTime: newRescheduleTime
+    }, newAuthToken);
+
+    if (res.status !== 200 || !res.body.success) {
+      throw new Error(`Reschedule failed: ${res.status} ${JSON.stringify(res.body)}`);
+    }
+  });
+
+  // 20. Security: Review submission rejected if appointment not completed (400)
+  await assert('POST /api/reviews rejects review for incomplete appointment (400)', async () => {
+    const res = await request('POST', '/api/reviews', {
+      appointmentId: bookedApptId,
+      doctorId: 'd2',
+      rating: 5,
+      comment: 'Attempting to review upcoming appointment'
+    }, newAuthToken);
+
+    if (res.status !== 400) {
+      throw new Error(`Expected 400 when reviewing non-completed appointment, got ${res.status}: ${JSON.stringify(res.body)}`);
+    }
+  });
+
+  // 21. Doctor Verification & Approval (Admin approves/rejects doctor)
+  await assert('PATCH /api/admin/doctors/:id/status allows admin to verify doctor', async () => {
+    const res = await request('PATCH', '/api/admin/doctors/d3/status', {
+      status: 'approved'
+    }, adminToken);
+
+    if (res.status !== 200 || !res.body.success) {
+      throw new Error(`Failed to update doctor verification status: ${res.status} ${JSON.stringify(res.body)}`);
+    }
+  });
+
+  // 22. Admin GET Stats
   await assert('GET /api/admin/stats returns analytics metrics', async () => {
     const res = await request('GET', '/api/admin/stats', null, adminToken);
     if (res.status !== 200 || !res.body.stats) {

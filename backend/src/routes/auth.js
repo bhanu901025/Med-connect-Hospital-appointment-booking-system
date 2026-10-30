@@ -4,11 +4,10 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import User from '../models/User.js';
 import Doctor from '../models/Doctor.js';
-import { protect } from '../middleware/auth.js';
+import { protect, getJwtSecret } from '../middleware/auth.js';
 import { isMysqlConnected, dbQuery, memoryStore } from '../services/mysqlDb.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'medconnect_super_secret_2026_change_me';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
 
 const generateToken = (user) => {
@@ -20,7 +19,7 @@ const generateToken = (user) => {
       name: user.name,
       doctorId: user.doctorId || ''
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: JWT_EXPIRES }
   );
 };
@@ -66,7 +65,8 @@ router.post('/register', async (req, res, next) => {
         about: about || `${name} is a dedicated healthcare specialist.`,
         languages: ['English', 'Hindi'],
         location: location || 'Delhi',
-        availableToday: 6
+        availableToday: 6,
+        status: 'pending' // Doctor profiles start in pending status until admin approves
       };
     }
 
@@ -98,7 +98,14 @@ router.post('/register', async (req, res, next) => {
       const token = generateToken(user);
       const userRes = user.toJSON();
 
-      return res.status(201).json({ success: true, token, user: userRes });
+      return res.status(201).json({ 
+        success: true, 
+        token, 
+        user: userRes,
+        message: targetRole === 'doctor' 
+          ? 'Doctor registered successfully. Account is pending admin verification before appearing in public searches.' 
+          : 'Registration successful'
+      });
     }
 
     // MySQL Storage
@@ -110,12 +117,13 @@ router.post('/register', async (req, res, next) => {
 
       if (doctorProfile) {
         await dbQuery(
-          `INSERT INTO doctors (id, name, specialty, experience, rating, reviewsCount, hospital, fee, education, about, languages, location, availableToday)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO doctors (id, name, specialty, experience, rating, reviewsCount, hospital, fee, education, about, languages, location, availableToday, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             doctorProfile.id, doctorProfile.name, doctorProfile.specialty, doctorProfile.experience,
             0.0, 0, doctorProfile.hospital, doctorProfile.fee, doctorProfile.education,
-            doctorProfile.about, Array.isArray(doctorProfile.languages) ? doctorProfile.languages.join(', ') : doctorProfile.languages, doctorProfile.location, doctorProfile.availableToday
+            doctorProfile.about, Array.isArray(doctorProfile.languages) ? doctorProfile.languages.join(', ') : doctorProfile.languages, 
+            doctorProfile.location, doctorProfile.availableToday, doctorProfile.status
           ]
         );
         memoryStore.doctors.push(doctorProfile);
@@ -130,7 +138,14 @@ router.post('/register', async (req, res, next) => {
       const userObj = { id: userId, name, email: cleanEmail, role: targetRole, phone, specialty, hospital, doctorId: createdDoctorId };
       const token = generateToken(userObj);
 
-      return res.status(201).json({ success: true, token, user: userObj });
+      return res.status(201).json({ 
+        success: true, 
+        token, 
+        user: userObj,
+        message: targetRole === 'doctor' 
+          ? 'Doctor registered successfully. Account is pending admin verification before appearing in public searches.' 
+          : 'Registration successful'
+      });
     }
 
     // In-Memory Fallback
@@ -159,7 +174,14 @@ router.post('/register', async (req, res, next) => {
     const token = generateToken(newUser);
     const { password: _, ...userNoPass } = newUser;
 
-    res.status(201).json({ success: true, token, user: userNoPass });
+    res.status(201).json({ 
+      success: true, 
+      token, 
+      user: userNoPass,
+      message: targetRole === 'doctor' 
+        ? 'Doctor registered successfully. Account is pending admin verification before appearing in public searches.' 
+        : 'Registration successful'
+    });
   } catch (err) {
     next(err);
   }

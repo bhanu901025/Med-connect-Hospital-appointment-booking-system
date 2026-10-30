@@ -48,7 +48,8 @@ export const memoryStore = {
       about: 'Leading cardiologist with expertise in interventional cardiology and heart failure management.',
       languages: 'English, Hindi',
       location: 'Delhi',
-      availableToday: 5
+      availableToday: 5,
+      status: 'approved'
     },
     {
       id: 'd2',
@@ -63,7 +64,8 @@ export const memoryStore = {
       about: 'Renowned neurologist specializing in stroke, epilepsy and neurodegenerative disorders.',
       languages: 'English, Hindi, Punjabi',
       location: 'Mumbai',
-      availableToday: 3
+      availableToday: 3,
+      status: 'approved'
     },
     {
       id: 'd3',
@@ -78,7 +80,8 @@ export const memoryStore = {
       about: 'Expert in cosmetic dermatology and clinical skin disorders with international fellowships.',
       languages: 'English, Marathi',
       location: 'Mumbai',
-      availableToday: 7
+      availableToday: 7,
+      status: 'approved'
     },
     {
       id: 'd4',
@@ -93,7 +96,8 @@ export const memoryStore = {
       about: 'Joint replacement specialist focused on minimally invasive knee and hip surgeries.',
       languages: 'English, Hindi',
       location: 'Delhi',
-      availableToday: 4
+      availableToday: 4,
+      status: 'approved'
     }
   ],
   appointments: [

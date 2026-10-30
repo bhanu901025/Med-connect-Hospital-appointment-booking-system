@@ -24,7 +24,19 @@ const AppointmentSchema = new mongoose.Schema({
   fee: { type: Number, default: 800 },
   payment: { type: String, default: 'Paid via Card' },
   notes: { type: String, default: '' },
-  prescription: { type: String, default: '' }
+  prescription: { type: String, default: '' },
+  rescheduleHistory: [{
+    previousDate: String,
+    previousTime: String,
+    rescheduledAt: { type: Date, default: Date.now },
+    rescheduledBy: String
+  }]
 }, { timestamps: true });
+
+// Slot protection: Prevent double-booking the same doctor at the same date and time for active appointments
+AppointmentSchema.index(
+  { doctorId: 1, date: 1, time: 1 }, 
+  { unique: true, partialFilterExpression: { status: { $ne: 'cancelled' } } }
+);
 
 export default mongoose.model('Appointment', AppointmentSchema);

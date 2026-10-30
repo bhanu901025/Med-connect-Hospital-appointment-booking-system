@@ -6,13 +6,20 @@ import { isMysqlConnected, dbQuery, memoryStore } from '../services/mysqlDb.js';
 
 const router = express.Router();
 
-// GET /api/doctors
+// GET /api/doctors (Public search - only approved doctors by default)
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
-    const { specialty, location, q, minRating, sortBy } = req.query;
+    const { specialty, location, q, minRating, sortBy, status } = req.query;
+    
+    // Only admins can view pending or rejected doctors. Public search only returns approved doctors.
+    const isAdmin = req.user && req.user.role === 'admin';
+    const targetStatus = (isAdmin && status) ? status : 'approved';
 
     if (mongoose.connection.readyState === 1) {
       let query = {};
+      if (targetStatus !== 'all') {
+        query.status = targetStatus;
+      }
       if (specialty && specialty !== 'All' && specialty !== 'All Specialties') {
         query.specialty = specialty;
       }
@@ -45,6 +52,10 @@ router.get('/', optionalAuth, async (req, res, next) => {
       let sql = 'SELECT * FROM doctors WHERE 1=1';
       const params = [];
 
+      if (targetStatus !== 'all') {
+        sql += ' AND (status = ? OR status IS NULL)';
+        params.push(targetStatus);
+      }
       if (specialty && specialty !== 'All' && specialty !== 'All Specialties') {
         sql += ' AND specialty = ?';
         params.push(specialty);
@@ -74,6 +85,9 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
     // Memory fallback
     let data = [...memoryStore.doctors];
+    if (targetStatus !== 'all') {
+      data = data.filter(d => (d.status || 'approved') === targetStatus);
+    }
     if (specialty && specialty !== 'All' && specialty !== 'All Specialties') {
       data = data.filter(d => d.specialty === specialty);
     }
@@ -124,7 +138,7 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// POST /api/doctors (Admin create)
+// POST /api/doctors (Admin create doctor)
 router.post('/', protect, authorize('admin'), async (req, res, next) => {
   try {
     const customId = req.body.id || 'd_' + Date.now();
@@ -141,7 +155,8 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
       about: req.body.about || 'Experienced healthcare specialist.',
       languages: Array.isArray(req.body.languages) ? req.body.languages : (typeof req.body.languages === 'string' ? req.body.languages.split(', ') : ['English', 'Hindi']),
       location: req.body.location || 'Delhi',
-      availableToday: Number(req.body.availableToday) || 5
+      availableToday: Number(req.body.availableToday) || 5,
+      status: req.body.status || 'approved'
     };
 
     if (mongoose.connection.readyState === 1) {
@@ -152,11 +167,13 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
 
     if (isMysqlConnected()) {
       await dbQuery(
-        `INSERT INTO doctors (id, name, specialty, experience, rating, reviewsCount, hospital, fee, education, about, languages, location, availableToday)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO doctors (id, name, specialty, experience, rating, reviewsCount, hospital, fee, education, about, languages, location, availableToday, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           docData.id, docData.name, docData.specialty, docData.experience, docData.rating, docData.reviewsCount,
-          docData.hospital, docData.fee, docData.education, docData.about, Array.isArray(docData.languages) ? docData.languages.join(', ') : docData.languages, docData.location, docData.availableToday
+          docData.hospital, docData.fee, docData.education, docData.about, 
+          Array.isArray(docData.languages) ? docData.languages.join(', ') : docData.languages, 
+          docData.location, docData.availableToday, docData.status
         ]
       );
       memoryStore.doctors.push(docData);
@@ -170,18 +187,32 @@ router.post('/', protect, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// PUT /api/doctors/:id (Admin or Doctor update availability & slots)
+// PUT /api/doctors/:id (Admin or Doctor update availability & profile with ownership check)
 router.put('/:id', protect, authorize('admin', 'doctor'), async (req, res, next) => {
   try {
     const { id } = req.params;
 
+    // Doctor profile ownership check: doctors can only update their own profile
+    if (req.user.role === 'doctor' && req.user.doctorId !== id) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Forbidden: You can only update your own doctor profile' 
+      });
+    }
+
+    // Only administrators can change doctor approval status
+    const updatePayload = { ...req.body };
+    if (req.user.role !== 'admin' && updatePayload.status !== undefined) {
+      delete updatePayload.status;
+    }
+
     if (mongoose.connection.readyState === 1) {
-      const doc = await Doctor.findOneAndUpdate({ id }, req.body, { new: true });
+      const doc = await Doctor.findOneAndUpdate({ id }, updatePayload, { new: true });
       if (doc) return res.json({ success: true, data: doc });
     }
 
     if (isMysqlConnected()) {
-      const { availableToday, fee, hospital, about, specialty, experience, location } = req.body;
+      const { availableToday, fee, hospital, about, specialty, experience, location, status } = updatePayload;
       let updates = [];
       let params = [];
 
@@ -192,6 +223,7 @@ router.put('/:id', protect, authorize('admin', 'doctor'), async (req, res, next)
       if (specialty !== undefined) { updates.push('specialty = ?'); params.push(specialty); }
       if (experience !== undefined) { updates.push('experience = ?'); params.push(Number(experience)); }
       if (location !== undefined) { updates.push('location = ?'); params.push(location); }
+      if (status !== undefined && req.user.role === 'admin') { updates.push('status = ?'); params.push(status); }
 
       if (updates.length > 0) {
         params.push(id);
@@ -204,7 +236,7 @@ router.put('/:id', protect, authorize('admin', 'doctor'), async (req, res, next)
 
     const idx = memoryStore.doctors.findIndex(d => d.id === id);
     if (idx !== -1) {
-      memoryStore.doctors[idx] = { ...memoryStore.doctors[idx], ...req.body };
+      memoryStore.doctors[idx] = { ...memoryStore.doctors[idx], ...updatePayload };
       return res.json({ success: true, data: memoryStore.doctors[idx] });
     }
 

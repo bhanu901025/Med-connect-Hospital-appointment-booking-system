@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
   createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Doctors Table
+-- 2. Doctors Table (With Verification Status)
 CREATE TABLE IF NOT EXISTS doctors (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
@@ -33,10 +33,11 @@ CREATE TABLE IF NOT EXISTS doctors (
   languages VARCHAR(255) DEFAULT 'English, Hindi',
   location VARCHAR(100) DEFAULT 'Delhi',
   availableToday INT DEFAULT 6,
+  status ENUM('pending', 'approved', 'rejected') DEFAULT 'approved',
   createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Appointments Table
+-- 3. Appointments Table (With Slot Protection)
 CREATE TABLE IF NOT EXISTS appointments (
   id VARCHAR(50) PRIMARY KEY,
   doctorId VARCHAR(50) NOT NULL,

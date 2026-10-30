@@ -93,55 +93,65 @@ app.listen(PORT, async () => {
       await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
       console.log('✅ CONNECTED TO MONGODB ATLAS SUCCESSFULLY!');
 
-      // Seed initial doctors & admin if empty in MongoDB Atlas
+      // Seed initial doctors & admin if empty in MongoDB Atlas (development / demo environments)
+      const isProduction = process.env.NODE_ENV === 'production';
+      const allowDemoAccounts = !isProduction || process.env.ENABLE_DEMO_ACCOUNTS === 'true';
+
       const docCount = await Doctor.countDocuments();
-      if (docCount === 0) {
+      if (docCount === 0 && allowDemoAccounts) {
         for (const doc of memoryStore.doctors) {
           await Doctor.create(doc);
         }
         console.log('✅ Seeded initial doctors into MongoDB Atlas');
       }
 
-      const adminUser = await User.findOne({ email: 'abhinav1@gmail.com' });
-      if (!adminUser) {
-        const passHash = await bcrypt.hash('12345', 10);
-        await User.create({
-          name: 'Abhinav',
-          email: 'abhinav1@gmail.com',
-          password: passHash,
-          role: 'admin',
-          phone: '+91 99000 00000'
-        });
-        console.log('✅ Default Abhinav Admin created in MongoDB Atlas');
+      const adminEmail = (process.env.ADMIN_EMAIL || (allowDemoAccounts ? 'abhinav1@gmail.com' : null))?.toLowerCase()?.trim();
+      const adminPass = process.env.ADMIN_PASSWORD || (allowDemoAccounts ? '12345' : null);
+
+      if (adminEmail && adminPass) {
+        const adminUser = await User.findOne({ email: adminEmail });
+        if (!adminUser) {
+          const passHash = await bcrypt.hash(adminPass, 10);
+          await User.create({
+            name: process.env.ADMIN_NAME || 'Hospital Administrator',
+            email: adminEmail,
+            password: passHash,
+            role: 'admin',
+            phone: process.env.ADMIN_PHONE || '+91 99000 00000'
+          });
+          console.log(`✅ Administrator account initialized (${adminEmail}) in MongoDB Atlas`);
+        }
       }
 
-      const demoPatient = await User.findOne({ email: 'patient@demo.com' });
-      if (!demoPatient) {
-        const passHash = await bcrypt.hash('demo123', 10);
-        await User.create({
-          name: 'Demo Patient',
-          email: 'patient@demo.com',
-          password: passHash,
-          role: 'patient',
-          phone: '+91 98765 43210'
-        });
-        console.log('✅ Demo Patient created in MongoDB Atlas');
-      }
+      if (allowDemoAccounts) {
+        const demoPatient = await User.findOne({ email: 'patient@demo.com' });
+        if (!demoPatient) {
+          const passHash = await bcrypt.hash('demo123', 10);
+          await User.create({
+            name: 'Demo Patient',
+            email: 'patient@demo.com',
+            password: passHash,
+            role: 'patient',
+            phone: '+91 98765 43210'
+          });
+          console.log('✅ Demo Patient created in MongoDB Atlas');
+        }
 
-      const demoDoctor = await User.findOne({ email: 'doctor@demo.com' });
-      if (!demoDoctor) {
-        const passHash = await bcrypt.hash('demo123', 10);
-        await User.create({
-          name: 'Dr. Sarah Mitchell',
-          email: 'doctor@demo.com',
-          password: passHash,
-          role: 'doctor',
-          phone: '+91 98765 12345',
-          doctorId: 'd1',
-          specialty: 'Cardiology',
-          hospital: 'MedConnect Care Center'
-        });
-        console.log('✅ Demo Doctor created in MongoDB Atlas');
+        const demoDoctor = await User.findOne({ email: 'doctor@demo.com' });
+        if (!demoDoctor) {
+          const passHash = await bcrypt.hash('demo123', 10);
+          await User.create({
+            name: 'Dr. Sarah Mitchell',
+            email: 'doctor@demo.com',
+            password: passHash,
+            role: 'doctor',
+            phone: '+91 98765 12345',
+            doctorId: 'd1',
+            specialty: 'Cardiology',
+            hospital: 'MedConnect Care Center'
+          });
+          console.log('✅ Demo Doctor created in MongoDB Atlas');
+        }
       }
 
     } catch (err) {
