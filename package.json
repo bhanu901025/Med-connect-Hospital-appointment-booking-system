@@ -1,0 +1,12 @@
+{
+  "name": "medconnect-hospital-appointment-system",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node backend/src/server.js",
+    "test": "cd backend && npm test",
+    "build": "cd frontend && npm run build",
+    "dev:backend": "cd backend && npm start",
+    "dev:frontend": "cd frontend && npm run dev"
+  }
+}
