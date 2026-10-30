@@ -73,3 +73,16 @@ CREATE TABLE IF NOT EXISTS reviews (
   createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_doctor (doctorId)
 );
+
+-- 5. Notifications Table (In-App Clinical & Booking Alerts)
+CREATE TABLE IF NOT EXISTS notifications (
+  id VARCHAR(50) PRIMARY KEY,
+  userEmail VARCHAR(150) NOT NULL,
+  title VARCHAR(150) NOT NULL,
+  message TEXT NOT NULL,
+  type ENUM('appointment', 'prescription', 'verification', 'reschedule', 'cancellation', 'system') DEFAULT 'system',
+  referenceId VARCHAR(50) DEFAULT '',
+  isRead BOOLEAN DEFAULT FALSE,
+  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user_notif (userEmail, isRead)
+);

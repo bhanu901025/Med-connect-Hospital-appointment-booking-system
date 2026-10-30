@@ -118,7 +118,14 @@ export const memoryStore = {
       fee: 1200,
       payment: 'Paid via Card',
       notes: 'Patient exhibits normal sinus rhythm. Advised low sodium diet and regular daily walking.',
-      prescription: 'Tab Ecosprin 75mg OD x 30 days, Tab Atorvastatin 10mg HS x 30 days'
+      prescription: 'Tab Ecosprin 75mg OD x 30 days, Tab Atorvastatin 10mg HS x 30 days',
+      medicines: [
+        { name: 'Tab Ecosprin', dosage: '75mg (1-0-0)', duration: '30 Days', instruction: 'After breakfast' },
+        { name: 'Tab Atorvastatin', dosage: '10mg (0-0-1)', duration: '30 Days', instruction: 'At bedtime' }
+      ],
+      reports: [
+        { id: 'rep-1', title: 'Resting ECG & Lipid Profile', fileType: 'application/pdf', uploadedAt: new Date().toISOString(), uploadedBy: 'patient@demo.com' }
+      ]
     }
   ],
   reviews: [
@@ -130,6 +137,38 @@ export const memoryStore = {
       patientName: 'Aarav Patient',
       rating: 5,
       comment: 'Dr. Sarah was extremely attentive and explained my ECG report in detail. Highly recommend!',
+      createdAt: new Date().toISOString()
+    }
+  ],
+  notifications: [
+    {
+      id: 'notif-1',
+      userEmail: 'patient@demo.com',
+      title: 'Prescription Available',
+      message: 'Dr. Sarah Mitchell uploaded your prescription and clinical advice for consultation #ap-101.',
+      type: 'prescription',
+      referenceId: 'ap-101',
+      isRead: false,
+      createdAt: new Date().toISOString()
+    },
+    {
+      id: 'notif-2',
+      userEmail: 'doctor@demo.com',
+      title: 'Consultation Completed',
+      message: 'Appointment with Aarav Patient has been marked completed.',
+      type: 'appointment',
+      referenceId: 'ap-101',
+      isRead: true,
+      createdAt: new Date().toISOString()
+    },
+    {
+      id: 'notif-3',
+      userEmail: 'abhinav1@gmail.com',
+      title: 'Hospital System Online',
+      message: 'MedConnect Clinical Management System initialized successfully.',
+      type: 'system',
+      referenceId: '',
+      isRead: false,
       createdAt: new Date().toISOString()
     }
   ]

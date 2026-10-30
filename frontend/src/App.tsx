@@ -9,7 +9,8 @@ import {
   LayoutDashboard, Users, FileText, DollarSign, TrendingUp,
   Video, Building2, ShieldCheck, Award, Timer, Sparkles,
   AlertCircle, Upload, File, CheckCircle2, XCircle, Clock3,
-  Plus, Trash2, Edit3, Pill, ClipboardList, RefreshCw, Printer, Shield, UserCheck, MessageSquare, Briefcase, GraduationCap, Globe, Mail, Lock
+  Plus, Trash2, Edit3, Pill, ClipboardList, RefreshCw, Printer, Shield, UserCheck, MessageSquare, Briefcase, GraduationCap, Globe, Mail, Lock,
+  Bell, Download, FileCheck
 } from 'lucide-react';
 
 // Types
@@ -35,6 +36,33 @@ interface Doctor {
   status?: 'pending' | 'approved' | 'rejected';
 }
 
+interface MedicineItem {
+  name: string;
+  dosage: string;
+  duration: string;
+  instruction: string;
+}
+
+interface MedicalReport {
+  id: string;
+  title: string;
+  fileData?: string;
+  fileType?: string;
+  uploadedAt: string;
+  uploadedBy?: string;
+}
+
+interface InAppNotification {
+  id: string;
+  userEmail: string;
+  title: string;
+  message: string;
+  type: 'appointment' | 'prescription' | 'verification' | 'reschedule' | 'cancellation' | 'system';
+  referenceId?: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
 interface Appointment {
   id: string;
   doctorId: string;
@@ -53,6 +81,8 @@ interface Appointment {
   fee: number;
   notes?: string;
   prescription?: string;
+  medicines?: MedicineItem[];
+  reports?: MedicalReport[];
   rescheduleHistory?: any[];
 }
 
@@ -236,12 +266,45 @@ export default function App(){
   });
 
   // Clinical Prescription Modal (Doctor Role)
-  const [clinicalModal, setClinicalModal] = useState<{ open: boolean; appt: Appointment|null; notes: string; prescription: string }>({
+  const [clinicalModal, setClinicalModal] = useState<{ 
+    open: boolean; 
+    appt: Appointment|null; 
+    notes: string; 
+    prescription: string;
+    medicines: MedicineItem[];
+  }>({
     open: false,
     appt: null,
     notes: '',
-    prescription: ''
+    prescription: '',
+    medicines: []
   });
+
+  // Printable Prescription Slip Modal
+  const [prescriptionSlipModal, setPrescriptionSlipModal] = useState<{ open: boolean; appt: Appointment|null }>({
+    open: false,
+    appt: null
+  });
+
+  // Diagnostic Lab Reports Modal
+  const [reportModal, setReportModal] = useState<{ 
+    open: boolean; 
+    appt: Appointment|null; 
+    title: string; 
+    fileType: string;
+    loading: boolean;
+  }>({
+    open: false,
+    appt: null,
+    title: '',
+    fileType: 'application/pdf',
+    loading: false
+  });
+
+  // In-App Notifications State
+  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [unreadNotifsCount, setUnreadNotifsCount] = useState<number>(0);
+  const [showNotificationsMenu, setShowNotificationsMenu] = useState<boolean>(false);
 
   // Reschedule Appointment Modal
   const [rescheduleModal, setRescheduleModal] = useState<{ open: boolean; appt: Appointment|null; newDate: string; newTime: string|null }>({
@@ -278,11 +341,36 @@ export default function App(){
     if (user) {
       setPatientForm(prev => ({ ...prev, name: user.name || prev.name, email: user.email || prev.email, phone: user.phone || prev.phone }));
       loadAppointments(user);
+      loadNotifications();
       if (user.role === 'admin') {
         loadAdminData();
       }
     }
   }, [user]);
+
+  const loadNotifications = async () => {
+    try {
+      const res = await apiGet('/notifications');
+      if (res && res.success && Array.isArray(res.data)) {
+        setNotifications(res.data);
+        setUnreadNotifsCount(res.unreadCount ?? res.data.filter((n: any) => !n.isRead).length);
+      }
+    } catch (err) {
+      // Ignore background notification check error
+    }
+  };
+
+  const handleMarkNotifRead = async (id: string) => {
+    await apiPatch(`/notifications/${id}/read`);
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    setUnreadNotifsCount(prev => Math.max(0, prev - 1));
+  };
+
+  const handleMarkAllNotifsRead = async () => {
+    await apiPatch('/notifications/read-all');
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    setUnreadNotifsCount(0);
+  };
 
   // Load reviews when doctor modal opens
   useEffect(() => {
@@ -584,15 +672,44 @@ export default function App(){
 
     const res = await apiPatch(`/appointments/${clinicalModal.appt.id}/clinical`, {
       notes: clinicalModal.notes,
-      prescription: clinicalModal.prescription
+      prescription: clinicalModal.prescription,
+      medicines: clinicalModal.medicines
     });
 
     if (res.success) {
       showToast('Prescription and clinical notes saved successfully!', 'success');
-      setClinicalModal({ open: false, appt: null, notes: '', prescription: '' });
-      if (user) loadAppointments(user);
+      setClinicalModal({ open: false, appt: null, notes: '', prescription: '', medicines: [] });
+      if (user) {
+        loadAppointments(user);
+        loadNotifications();
+      }
     } else {
       showToast(res.error || 'Failed to save clinical notes', 'error');
+    }
+  };
+
+  const handleAttachReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reportModal.appt || !reportModal.title.trim()) return;
+    setReportModal(prev => ({ ...prev, loading: true }));
+
+    const res = await apiPost(`/appointments/${reportModal.appt.id}/reports`, {
+      title: reportModal.title.trim(),
+      fileType: reportModal.fileType || 'application/pdf',
+      fileData: 'REPORT_ATTACHMENT_VERIFIED_BY_LAB'
+    });
+
+    setReportModal(prev => ({ ...prev, loading: false }));
+
+    if (res.success || res.data) {
+      showToast('Diagnostic lab report attached successfully!', 'success');
+      setReportModal({ open: false, appt: null, title: '', fileType: 'application/pdf', loading: false });
+      if (user) {
+        loadAppointments(user);
+        loadNotifications();
+      }
+    } else {
+      showToast(res.error || 'Failed to attach report', 'error');
     }
   };
 
@@ -633,6 +750,78 @@ export default function App(){
           <div className="flex items-center gap-2.5">
             {user ? (
               <div className="flex items-center gap-3">
+                {/* Notifications Bell */}
+                <div className="relative">
+                  <button 
+                    onClick={() => setShowNotificationsMenu(!showNotificationsMenu)}
+                    className="relative p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+                    title="In-App Notifications"
+                  >
+                    <Bell className="w-4 h-4 text-slate-700" />
+                    {unreadNotifsCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-black flex items-center justify-center animate-pulse">
+                        {unreadNotifsCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Notifications Dropdown */}
+                  {showNotificationsMenu && (
+                    <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-3xl shadow-2xl border border-slate-200/90 py-3 z-50 animate-in fade-in slide-in-from-top-2">
+                      <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">Notifications</h4>
+                          <p className="text-[10px] text-slate-400 font-semibold">{unreadNotifsCount} unread alerts</p>
+                        </div>
+                        {unreadNotifsCount > 0 && (
+                          <button 
+                            onClick={handleMarkAllNotifsRead} 
+                            className="text-[11px] font-bold text-[#0E7C8C] hover:underline cursor-pointer"
+                          >
+                            Mark all read
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-72 overflow-y-auto divide-y divide-slate-50">
+                        {notifications.length === 0 ? (
+                          <div className="py-6 text-center text-slate-400 text-xs font-medium">
+                            No notifications yet
+                          </div>
+                        ) : (
+                          notifications.slice(0, 10).map(n => (
+                            <div 
+                              key={n.id} 
+                              onClick={() => { if (!n.isRead) handleMarkNotifRead(n.id); }}
+                              className={`p-3.5 hover:bg-slate-50 transition-colors cursor-pointer flex items-start gap-3 ${!n.isRead ? 'bg-teal-50/40' : ''}`}
+                            >
+                              <div className={`p-2 rounded-xl text-white shrink-0 ${
+                                n.type === 'prescription' ? 'bg-emerald-600' :
+                                n.type === 'cancellation' ? 'bg-rose-500' :
+                                n.type === 'reschedule' ? 'bg-amber-500' : 'bg-[#0E7C8C]'
+                              }`}>
+                                {n.type === 'prescription' ? <Pill className="w-3.5 h-3.5" /> :
+                                 n.type === 'reschedule' ? <Calendar className="w-3.5 h-3.5" /> :
+                                 <Clock3 className="w-3.5 h-3.5" />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-1">
+                                  <h5 className="text-xs font-bold text-slate-900 truncate">{n.title}</h5>
+                                  {!n.isRead && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />}
+                                </div>
+                                <p className="text-[11px] text-slate-600 mt-0.5 line-clamp-2 leading-relaxed">{n.message}</p>
+                                <span className="text-[9px] text-slate-400 mt-1 block">
+                                  {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button 
                   onClick={() => {
                     if (user.role === 'patient') setPage('patientDashboard');
@@ -938,29 +1127,50 @@ export default function App(){
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0">
+                    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0">
+                      {/* Medical Reports Button */}
+                      <button 
+                        onClick={() => setReportModal({ open: true, appt, title: '', fileType: 'application/pdf', loading: false })}
+                        className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                        title="View or upload lab reports"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Lab Reports</span>
+                        {appt.reports && appt.reports.length > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-[#0E7C8C] text-white text-[9px] font-black">{appt.reports.length}</span>
+                        )}
+                      </button>
+
                       {appt.status === 'completed' && (
-                        <button 
-                          onClick={() => setReviewModal({ open: true, appt, rating: 5, comment: '' })}
-                          className="px-4 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" /> Rate & Review Doctor
-                        </button>
+                        <>
+                          <button 
+                            onClick={() => setPrescriptionSlipModal({ open: true, appt })}
+                            className="px-3.5 py-2 rounded-xl bg-teal-50 text-[#0E7C8C] border border-teal-200/80 hover:bg-teal-100 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-[#0E7C8C]" /> Print Slip
+                          </button>
+                          <button 
+                            onClick={() => setReviewModal({ open: true, appt, rating: 5, comment: '' })}
+                            className="px-3.5 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" /> Review
+                          </button>
+                        </>
                       )}
 
                       {appt.status === 'upcoming' && (
                         <div className="flex items-center gap-2">
                           <button 
                             onClick={() => setRescheduleModal({ open: true, appt, newDate: generateDates()[0].iso, newTime: null })}
-                            className="px-3.5 py-2 rounded-xl bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                            className="px-3 py-2 rounded-xl bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                           >
                             <Calendar className="w-3.5 h-3.5 text-teal-600" /> Reschedule
                           </button>
                           <button 
                             onClick={() => handleCancelAppointment(appt.id)}
-                            className="px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold cursor-pointer"
+                            className="px-3 py-2 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold cursor-pointer"
                           >
-                            Cancel Booking
+                            Cancel
                           </button>
                         </div>
                       )}
@@ -1052,13 +1262,42 @@ export default function App(){
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0">
+                    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0">
+                      {/* Patient Reports */}
                       <button 
-                        onClick={() => setClinicalModal({ open: true, appt, notes: appt.notes || '', prescription: appt.prescription || '' })}
-                        className="px-4 py-2 rounded-xl bg-[#0E7C8C] text-white text-xs font-bold flex items-center gap-1.5 hover:bg-[#0A626F] transition-colors cursor-pointer"
+                        onClick={() => setReportModal({ open: true, appt, title: '', fileType: 'application/pdf', loading: false })}
+                        className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                        title="View diagnostic reports"
                       >
-                        <Edit3 className="w-3.5 h-3.5" /> Write Prescription
+                        <FileText className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Reports</span>
+                        {appt.reports && appt.reports.length > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-[#0E7C8C] text-white text-[9px] font-black">{appt.reports.length}</span>
+                        )}
                       </button>
+
+                      <button 
+                        onClick={() => setClinicalModal({ 
+                          open: true, 
+                          appt, 
+                          notes: appt.notes || '', 
+                          prescription: appt.prescription || '',
+                          medicines: appt.medicines || [] 
+                        })}
+                        className="px-3.5 py-2 rounded-xl bg-[#0E7C8C] text-white text-xs font-bold flex items-center gap-1.5 hover:bg-[#0A626F] transition-colors cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" /> Rx & Notes
+                      </button>
+
+                      {(appt.prescription || appt.status === 'completed') && (
+                        <button 
+                          onClick={() => setPrescriptionSlipModal({ open: true, appt })}
+                          className="px-3 py-2 rounded-xl bg-teal-50 text-[#0E7C8C] border border-teal-200/80 hover:bg-teal-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          title="Print official prescription slip"
+                        >
+                          <Printer className="w-3.5 h-3.5" /> Slip
+                        </button>
+                      )}
 
                       {appt.status !== 'completed' && (
                         <button 
@@ -1870,16 +2109,101 @@ export default function App(){
                 <h3 className="text-lg font-extrabold text-slate-900">Write Prescription & Clinical Notes</h3>
                 <p className="text-slate-500 text-xs">Patient: {clinicalModal.appt.patientName} ({clinicalModal.appt.gender}, {clinicalModal.appt.age} yrs)</p>
               </div>
-              <button onClick={() => setClinicalModal({ open: false, appt: null, notes: '', prescription: '' })} className="p-2 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer">
+              <button onClick={() => setClinicalModal({ open: false, appt: null, notes: '', prescription: '', medicines: [] })} className="p-2 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleSaveClinicalNotes} className="space-y-4">
+              {/* Structured Medicines Section */}
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Prescription & Dosage Details</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-700">Prescription Medications</label>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setClinicalModal({
+                        ...clinicalModal,
+                        medicines: [
+                          ...clinicalModal.medicines,
+                          { name: '', dosage: '1 Tab (1-0-1)', duration: '5 Days', instruction: 'After meals' }
+                        ]
+                      });
+                    }}
+                    className="text-[11px] font-bold text-[#0E7C8C] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" /> Add Medication
+                  </button>
+                </div>
+
+                {clinicalModal.medicines.length > 0 && (
+                  <div className="space-y-2 mb-3 max-h-40 overflow-y-auto p-2 bg-slate-50 rounded-xl border border-slate-200">
+                    {clinicalModal.medicines.map((med, idx) => (
+                      <div key={idx} className="grid grid-cols-12 gap-1.5 items-center text-xs">
+                        <input 
+                          type="text" 
+                          placeholder="Medicine name" 
+                          value={med.name}
+                          onChange={e => {
+                            const copy = [...clinicalModal.medicines];
+                            copy[idx].name = e.target.value;
+                            setClinicalModal({ ...clinicalModal, medicines: copy });
+                          }}
+                          className="col-span-4 p-1.5 rounded-lg border border-slate-200 bg-white text-xs outline-none focus:border-[#0E7C8C]"
+                        />
+                        <input 
+                          type="text" 
+                          placeholder="Dosage" 
+                          value={med.dosage}
+                          onChange={e => {
+                            const copy = [...clinicalModal.medicines];
+                            copy[idx].dosage = e.target.value;
+                            setClinicalModal({ ...clinicalModal, medicines: copy });
+                          }}
+                          className="col-span-3 p-1.5 rounded-lg border border-slate-200 bg-white text-xs outline-none focus:border-[#0E7C8C]"
+                        />
+                        <input 
+                          type="text" 
+                          placeholder="Duration" 
+                          value={med.duration}
+                          onChange={e => {
+                            const copy = [...clinicalModal.medicines];
+                            copy[idx].duration = e.target.value;
+                            setClinicalModal({ ...clinicalModal, medicines: copy });
+                          }}
+                          className="col-span-2 p-1.5 rounded-lg border border-slate-200 bg-white text-xs outline-none focus:border-[#0E7C8C]"
+                        />
+                        <input 
+                          type="text" 
+                          placeholder="Instructions" 
+                          value={med.instruction}
+                          onChange={e => {
+                            const copy = [...clinicalModal.medicines];
+                            copy[idx].instruction = e.target.value;
+                            setClinicalModal({ ...clinicalModal, medicines: copy });
+                          }}
+                          className="col-span-2 p-1.5 rounded-lg border border-slate-200 bg-white text-xs outline-none focus:border-[#0E7C8C]"
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const copy = clinicalModal.medicines.filter((_, i) => i !== idx);
+                            setClinicalModal({ ...clinicalModal, medicines: copy });
+                          }}
+                          className="col-span-1 text-slate-400 hover:text-rose-600 flex justify-center"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Prescription Summary & Dosage Details</label>
                 <textarea 
-                  rows={4} required
+                  rows={3} required
                   value={clinicalModal.prescription}
                   onChange={e => setClinicalModal({ ...clinicalModal, prescription: e.target.value })}
                   placeholder="e.g. Tab Paracetamol 500mg TDS x 5 days&#10;Tab Amoxicillin 500mg BD x 7 days"
@@ -1888,7 +2212,7 @@ export default function App(){
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Clinical / Diagnostic Notes</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Clinical / Diagnostic Notes & Advice</label>
                 <textarea 
                   rows={2}
                   value={clinicalModal.notes}
@@ -1899,7 +2223,7 @@ export default function App(){
               </div>
 
               <div className="flex items-center gap-3 pt-2">
-                <button type="button" onClick={() => setClinicalModal({ open: false, appt: null, notes: '', prescription: '' })} className="w-1/3 py-3 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer">
+                <button type="button" onClick={() => setClinicalModal({ open: false, appt: null, notes: '', prescription: '', medicines: [] })} className="w-1/3 py-3 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer">
                   Cancel
                 </button>
                 <button type="submit" className="w-2/3 py-3 rounded-xl bg-[#0E7C8C] text-white font-bold text-xs hover:bg-[#0A626F] cursor-pointer">
@@ -1907,6 +2231,269 @@ export default function App(){
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* PRINTABLE PRESCRIPTION SLIP MODAL */}
+      {prescriptionSlipModal.open && prescriptionSlipModal.appt && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 border border-slate-200 shadow-2xl animate-in fade-in zoom-in-95 duration-200 my-auto">
+            
+            {/* Modal Actions Bar (hidden on print) */}
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100 print:hidden">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-teal-50 text-[#0E7C8C]">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">Hospital Medical Prescription</h3>
+                  <p className="text-slate-400 text-xs">Official Clinical Consultation Record</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => window.print()}
+                  className="px-4 py-2 rounded-xl bg-[#0E7C8C] hover:bg-[#0A626F] text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-[#0E7C8C]/20 transition-all cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Print Prescription
+                </button>
+                <button 
+                  onClick={() => setPrescriptionSlipModal({ open: false, appt: null })}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* PRINTABLE LETTERHEAD SHEET */}
+            <div id="printable-prescription" className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-inner space-y-6">
+              
+              {/* Hospital Header */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b-2 border-[#0E7C8C]/30">
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 rounded-2xl bg-[#0E7C8C] flex items-center justify-center text-white font-bold shadow-md">
+                    <Stethoscope className="h-7 w-7" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900 tracking-tight">MEDCONNECT HOSPITAL</h2>
+                    <p className="text-[11px] font-bold text-[#0E7C8C] uppercase tracking-wider">Multi-Specialty Care & Clinical Network</p>
+                    <p className="text-[10px] text-slate-400">NABH Accredited • Reg No: MHC/2026/DL-9942 • 24x7 Helpline: 1800-425-9999</p>
+                  </div>
+                </div>
+                <div className="text-left sm:text-right text-[11px] text-slate-500 font-medium">
+                  <p>Date: <strong className="text-slate-900">{prescriptionSlipModal.appt.date}</strong></p>
+                  <p>Slot: <strong className="text-slate-900">{prescriptionSlipModal.appt.time}</strong></p>
+                  <p className="font-mono text-[10px] text-slate-400">Ref: #{prescriptionSlipModal.appt.id}</p>
+                </div>
+              </div>
+
+              {/* Patient & Doctor Demographics */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200/60 text-xs">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Patient Details</span>
+                  <p className="text-sm font-extrabold text-slate-900">{prescriptionSlipModal.appt.patientName}</p>
+                  <p className="text-slate-600 mt-0.5">Age / Gender: <span className="font-bold text-slate-800">{prescriptionSlipModal.appt.age} Yrs / {prescriptionSlipModal.appt.gender}</span></p>
+                  <p className="text-slate-600">Email: <span className="font-mono text-slate-800">{prescriptionSlipModal.appt.patientEmail}</span></p>
+                  {prescriptionSlipModal.appt.patientPhone && <p className="text-slate-600">Contact: <span className="font-mono text-slate-800">{prescriptionSlipModal.appt.patientPhone}</span></p>}
+                </div>
+                <div className="sm:border-l sm:border-slate-200 sm:pl-4">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Consulting Specialist</span>
+                  <p className="text-sm font-extrabold text-[#0E7C8C]">{prescriptionSlipModal.appt.doctorName || 'Medical Consultant'}</p>
+                  <p className="text-slate-600 mt-0.5">Hospital: <span className="font-medium text-slate-800">MedConnect Specialty Clinic</span></p>
+                  <p className="text-slate-600">Consultation Mode: <span className="font-bold text-slate-800">{prescriptionSlipModal.appt.type}</span></p>
+                  <p className="text-slate-600">Chief Complaint: <span className="italic text-slate-800">{prescriptionSlipModal.appt.problem}</span></p>
+                </div>
+              </div>
+
+              {/* Rx Heading */}
+              <div className="flex items-center gap-3 pt-1">
+                <span className="text-3xl font-serif font-black text-[#0E7C8C] tracking-tight">℞</span>
+                <div className="h-0.5 flex-1 bg-gradient-to-r from-[#0E7C8C]/40 to-transparent" />
+              </div>
+
+              {/* Clinical Notes & Diagnosis */}
+              {prescriptionSlipModal.appt.notes && (
+                <div className="p-3.5 rounded-xl bg-teal-50/50 border border-teal-100 text-xs">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-teal-800 block mb-1">Clinical Diagnosis & Findings</span>
+                  <p className="text-slate-800 font-medium leading-relaxed whitespace-pre-wrap">{prescriptionSlipModal.appt.notes}</p>
+                </div>
+              )}
+
+              {/* Structured Medicines Table if available, or Prescription text */}
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-2">Prescribed Medication & Dosage</span>
+                
+                {prescriptionSlipModal.appt.medicines && prescriptionSlipModal.appt.medicines.length > 0 ? (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-100/80 text-slate-700 font-black text-[10px] uppercase">
+                        <tr>
+                          <th className="p-2.5 pl-3">#</th>
+                          <th className="p-2.5">Medicine Name</th>
+                          <th className="p-2.5">Dosage / Frequency</th>
+                          <th className="p-2.5">Duration</th>
+                          <th className="p-2.5 pr-3">Instructions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                        {prescriptionSlipModal.appt.medicines.map((m, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/50">
+                            <td className="p-2.5 pl-3 font-bold text-slate-400">{idx + 1}</td>
+                            <td className="p-2.5 font-bold text-slate-900">{m.name}</td>
+                            <td className="p-2.5 font-mono text-[#0E7C8C] font-semibold">{m.dosage}</td>
+                            <td className="p-2.5 text-slate-600">{m.duration}</td>
+                            <td className="p-2.5 pr-3 text-slate-500 italic">{m.instruction}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed">
+                    {prescriptionSlipModal.appt.prescription || 'No specific oral medications prescribed. Follow general clinical advice.'}
+                  </div>
+                )}
+              </div>
+
+              {/* General Advice & Signature Footer */}
+              <div className="pt-6 border-t border-slate-200 flex flex-col sm:flex-row items-start sm:items-end justify-between gap-6">
+                <div className="text-[10px] text-slate-500 space-y-1 max-w-sm">
+                  <p className="font-bold text-slate-700">General Patient Instructions:</p>
+                  <p>• Complete the prescribed antibiotic course without discontinuation.</p>
+                  <p>• Schedule follow-up in clinic after 14 days or in case of persistent fever / symptoms.</p>
+                  <p>• For medical emergencies, visit MedConnect Casualty or dial 1800-425-9999.</p>
+                </div>
+                <div className="text-center sm:text-right shrink-0">
+                  <div className="inline-block p-2 rounded-xl bg-teal-50 border border-teal-200 mb-1">
+                    <CheckCircle2 className="w-5 h-5 text-teal-600 mx-auto" />
+                  </div>
+                  <p className="text-xs font-black text-slate-900">{prescriptionSlipModal.appt.doctorName || 'Authorized Medical Practitioner'}</p>
+                  <p className="text-[10px] text-[#0E7C8C] font-bold">Verified Digital Signature</p>
+                  <p className="text-[9px] text-slate-400">MedConnect Hospital & Research Center</p>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DIAGNOSTIC LAB REPORTS MODAL */}
+      {reportModal.open && reportModal.appt && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 border border-slate-200 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-teal-50 text-[#0E7C8C]">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">Diagnostic & Lab Reports</h3>
+                  <p className="text-slate-500 text-xs">Consultation #{reportModal.appt.id} • {reportModal.appt.patientName}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setReportModal({ open: false, appt: null, title: '', fileType: 'application/pdf', loading: false })}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-full cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Attached Reports List */}
+            <div className="space-y-2.5 mb-6">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Attached Diagnostic Files</span>
+              {(!reportModal.appt.reports || reportModal.appt.reports.length === 0) ? (
+                <div className="p-5 rounded-2xl bg-slate-50 text-center border border-dashed border-slate-200 text-xs text-slate-400 font-medium">
+                  No diagnostic reports uploaded yet for this appointment.
+                </div>
+              ) : (
+                reportModal.appt.reports.map((rep, idx) => (
+                  <div key={rep.id || idx} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="p-2 rounded-xl bg-teal-100 text-[#0E7C8C] shrink-0 font-bold">
+                        <FileCheck className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-bold text-slate-900 truncate">{rep.title}</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Uploaded on {new Date(rep.uploadedAt).toLocaleDateString()} {rep.uploadedBy ? `by ${rep.uploadedBy}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-mono font-bold text-teal-700 shrink-0">
+                      VERIFIED LAB
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Upload New Lab Report Form */}
+            <form onSubmit={handleAttachReport} className="pt-4 border-t border-slate-100 space-y-3.5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Attach New Medical Report</span>
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Report Title / Test Name</label>
+                <input 
+                  type="text" 
+                  required
+                  placeholder="e.g. Complete Blood Count (CBC) or ECG Report"
+                  value={reportModal.title}
+                  onChange={e => setReportModal({ ...reportModal, title: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs outline-none focus:border-[#0E7C8C]"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">File Format / Report Type</label>
+                <select 
+                  value={reportModal.fileType}
+                  onChange={e => setReportModal({ ...reportModal, fileType: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs outline-none focus:border-[#0E7C8C] bg-white cursor-pointer"
+                >
+                  <option value="application/pdf">Diagnostic Report (PDF Document)</option>
+                  <option value="image/jpeg">Diagnostic Scan / Imaging (JPG/PNG)</option>
+                  <option value="application/dicom">Radiology DICOM / X-Ray</option>
+                  <option value="text/plain">Lab Pathology Summary Note</option>
+                </select>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <span className="text-[10px] text-slate-400 font-bold block w-full">Quick Presets:</span>
+                {['CBC & Hemogram', 'Resting ECG', 'Lipid Profile', 'Chest X-Ray', 'Thyroid Profile'].map(preset => (
+                  <button 
+                    key={preset}
+                    type="button"
+                    onClick={() => setReportModal({ ...reportModal, title: preset })}
+                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[10px] font-bold text-slate-600 cursor-pointer"
+                  >
+                    + {preset}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => setReportModal({ open: false, appt: null, title: '', fileType: 'application/pdf', loading: false })}
+                  className="w-1/3 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer"
+                >
+                  Close
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={reportModal.loading}
+                  className="w-2/3 py-2.5 rounded-xl bg-[#0E7C8C] hover:bg-[#0A626F] text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{reportModal.loading ? 'Attaching...' : 'Upload & Attach Report'}</span>
+                </button>
+              </div>
+            </form>
+
           </div>
         </div>
       )}

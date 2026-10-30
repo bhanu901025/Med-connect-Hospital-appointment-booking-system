@@ -25,6 +25,20 @@ const AppointmentSchema = new mongoose.Schema({
   payment: { type: String, default: 'Paid via Card' },
   notes: { type: String, default: '' },
   prescription: { type: String, default: '' },
+  medicines: [{
+    name: { type: String, default: '' },
+    dosage: { type: String, default: '' },
+    duration: { type: String, default: '' },
+    instruction: { type: String, default: '' }
+  }],
+  reports: [{
+    id: { type: String, default: '' },
+    title: { type: String, default: '' },
+    fileData: { type: String, default: '' },
+    fileType: { type: String, default: '' },
+    uploadedAt: { type: Date, default: Date.now },
+    uploadedBy: { type: String, default: '' }
+  }],
   rescheduleHistory: [{
     previousDate: String,
     previousTime: String,

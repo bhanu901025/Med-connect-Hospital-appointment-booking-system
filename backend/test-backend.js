@@ -361,6 +361,71 @@ async function runTests() {
       }
     });
 
+    // 23. Clinical Management: Assigned doctor writes prescription & structured medicines
+    let d1ApptId = '';
+    const d1TestDate = `2026-12-${Math.floor(Math.random()*25+1).toString().padStart(2, '0')}`;
+    const d1TestTime = '02:30 PM';
+    await assert('POST /api/appointments/book creates consultation with assigned doctor d1', async () => {
+      const res = await request('POST', '/api/appointments/book', {
+        doctorId: 'd1',
+        date: d1TestDate,
+        time: d1TestTime,
+        problem: 'Cardiac checkup and chest tightness'
+      }, newAuthToken);
+
+      if (res.status !== 201 || !res.body.data) {
+        throw new Error(`Failed to book appt with d1: ${res.status} ${JSON.stringify(res.body)}`);
+      }
+      d1ApptId = res.body.data.id;
+    });
+
+    await assert('PATCH /api/appointments/:id/clinical allows assigned doctor to save medicines & notes', async () => {
+      const res = await request('PATCH', `/api/appointments/${d1ApptId}/clinical`, {
+        notes: 'Patient advised 30-min walking and low salt diet.',
+        prescription: 'Tab Ecosprin 75mg OD x 30 days',
+        medicines: [
+          { name: 'Tab Ecosprin', dosage: '75mg', duration: '30 Days', instruction: 'After breakfast' }
+        ]
+      }, doctorToken);
+
+      if (res.status !== 200 || !res.body.data) {
+        throw new Error(`Clinical update failed: ${res.status} ${JSON.stringify(res.body)}`);
+      }
+    });
+
+    // 24. Diagnostic Lab Reports: Patient attaches report to appointment
+    await assert('POST /api/appointments/:id/reports attaches diagnostic report', async () => {
+      const res = await request('POST', `/api/appointments/${d1ApptId}/reports`, {
+        title: 'Resting ECG & Lipid Profile',
+        fileType: 'application/pdf'
+      }, newAuthToken);
+
+      if (res.status !== 201 || !res.body.success) {
+        throw new Error(`Report upload failed: ${res.status} ${JSON.stringify(res.body)}`);
+      }
+    });
+
+    // 25. In-App Notifications: Patient fetches notification feed and marks as read
+    let notifIdToRead = '';
+    await assert('GET /api/notifications returns user notification alerts', async () => {
+      const res = await request('GET', '/api/notifications', null, newAuthToken);
+      if (res.status !== 200 || !Array.isArray(res.body.data)) {
+        throw new Error(`Failed to retrieve notifications: ${res.status} ${JSON.stringify(res.body)}`);
+      }
+      if (res.body.data.length > 0) {
+        notifIdToRead = res.body.data[0].id;
+      }
+    });
+
+    await assert('PATCH /api/notifications/:id/read marks notification as read', async () => {
+      if (notifIdToRead) {
+        const res = await request('PATCH', `/api/notifications/${notifIdToRead}/read`, null, newAuthToken);
+        if (res.status !== 200 || !res.body.success) {
+          throw new Error(`Failed to mark notification read: ${res.status} ${JSON.stringify(res.body)}`);
+        }
+      }
+    });
+
     console.log(`\n📊 Summary: ${passed} passed, ${failed} failed out of ${passed + failed} tests.`);
     if (failed > 0) process.exit(1);
   } finally {

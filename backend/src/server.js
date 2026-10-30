@@ -14,6 +14,7 @@ import doctorRoutes from './routes/doctors.js';
 import appointmentRoutes from './routes/appointments.js';
 import adminRoutes from './routes/admin.js';
 import reviewRoutes from './routes/reviews.js';
+import notificationRoutes from './routes/notifications.js';
 
 import User from './models/User.js';
 import Doctor from './models/Doctor.js';
@@ -45,6 +46,7 @@ app.use('/api/doctors', doctorRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({

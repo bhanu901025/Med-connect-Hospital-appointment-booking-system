@@ -4,6 +4,7 @@ import Appointment from '../models/Appointment.js';
 import Doctor from '../models/Doctor.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { isMysqlConnected, dbQuery, memoryStore } from '../services/mysqlDb.js';
+import { createNotification } from '../services/notificationService.js';
 
 const router = express.Router();
 
@@ -102,6 +103,23 @@ router.post('/book', protect, async (req, res, next) => {
           prescription: ''
         });
 
+        createNotification({
+          userEmail: patientEmail,
+          title: 'Appointment Confirmed',
+          message: `Your appointment with ${docName} on ${date} at ${time} has been scheduled.`,
+          type: 'appointment',
+          referenceId: apptId
+        });
+        if (doctorDoc && doctorDoc.email) {
+          createNotification({
+            userEmail: doctorDoc.email,
+            title: 'New Consultation Booked',
+            message: `${patientName} booked an appointment for ${date} at ${time}.`,
+            type: 'appointment',
+            referenceId: apptId
+          });
+        }
+
         return res.status(201).json({ success: true, data: saved });
       } catch (err) {
         // MongoDB duplicate key error code (compound unique index violation)
@@ -160,6 +178,22 @@ router.post('/book', protect, async (req, res, next) => {
       );
 
       memoryStore.appointments.unshift(newAppt);
+      createNotification({
+        userEmail: patientEmail,
+        title: 'Appointment Confirmed',
+        message: `Your appointment with ${docName} on ${date} at ${time} has been scheduled.`,
+        type: 'appointment',
+        referenceId: apptId
+      });
+      if (doctorDoc && doctorDoc.email) {
+        createNotification({
+          userEmail: doctorDoc.email,
+          title: 'New Consultation Booked',
+          message: `${patientName} booked an appointment for ${date} at ${time}.`,
+          type: 'appointment',
+          referenceId: apptId
+        });
+      }
       return res.status(201).json({ success: true, data: newAppt });
     }
 
@@ -191,10 +225,28 @@ router.post('/book', protect, async (req, res, next) => {
       fee: finalFee,
       payment: payment || 'Paid via Card',
       notes: '',
-      prescription: ''
+      prescription: '',
+      medicines: [],
+      reports: []
     };
 
     memoryStore.appointments.unshift(newAppt);
+    createNotification({
+      userEmail: patientEmail,
+      title: 'Appointment Confirmed',
+      message: `Your appointment with ${docName} on ${date} at ${time} has been scheduled.`,
+      type: 'appointment',
+      referenceId: apptId
+    });
+    if (doctorDoc && doctorDoc.email) {
+      createNotification({
+        userEmail: doctorDoc.email,
+        title: 'New Consultation Booked',
+        message: `${patientName} booked an appointment for ${date} at ${time}.`,
+        type: 'appointment',
+        referenceId: apptId
+      });
+    }
     res.status(201).json({ success: true, data: newAppt });
   } catch (err) {
     next(err);
@@ -353,6 +405,14 @@ router.patch('/:id/cancel', protect, async (req, res, next) => {
     const memAppt = memoryStore.appointments.find(a => a.id === id);
     if (memAppt) memAppt.status = 'cancelled';
 
+    createNotification({
+      userEmail: appt.patientEmail,
+      title: 'Appointment Cancelled',
+      message: `Your appointment with ${appt.doctorName || 'doctor'} on ${appt.date} at ${appt.time} has been cancelled.`,
+      type: 'cancellation',
+      referenceId: id
+    });
+
     res.json({ success: true, message: 'Appointment cancelled successfully' });
   } catch (err) {
     next(err);
@@ -430,6 +490,13 @@ router.patch('/:id/reschedule', protect, async (req, res, next) => {
         { new: true }
       );
 
+      createNotification({
+        userEmail: appt.patientEmail,
+        title: 'Appointment Rescheduled',
+        message: `Your consultation with ${appt.doctorName || 'doctor'} has been rescheduled to ${newDate} at ${newTime}.`,
+        type: 'reschedule',
+        referenceId: id
+      });
       return res.json({ success: true, message: 'Appointment rescheduled successfully', data: updated });
     }
 
@@ -459,6 +526,13 @@ router.patch('/:id/reschedule', protect, async (req, res, next) => {
         memAppt.status = 'upcoming';
       }
 
+      createNotification({
+        userEmail: appt.patientEmail,
+        title: 'Appointment Rescheduled',
+        message: `Your consultation with ${appt.doctorName || 'doctor'} has been rescheduled to ${newDate} at ${newTime}.`,
+        type: 'reschedule',
+        referenceId: id
+      });
       return res.json({ success: true, message: 'Appointment rescheduled successfully', data: rows[0] });
     }
 
@@ -485,6 +559,14 @@ router.patch('/:id/reschedule', protect, async (req, res, next) => {
         previousTime: appt.time,
         rescheduledBy: req.user.email,
         rescheduledAt: new Date().toISOString()
+      });
+
+      createNotification({
+        userEmail: appt.patientEmail,
+        title: 'Appointment Rescheduled',
+        message: `Your consultation with ${appt.doctorName || 'doctor'} has been rescheduled to ${newDate} at ${newTime}.`,
+        type: 'reschedule',
+        referenceId: id
       });
       return res.json({ success: true, message: 'Appointment rescheduled successfully', data: memAppt });
     }
@@ -539,7 +621,7 @@ router.patch('/:id/status', protect, authorize('doctor', 'admin'), async (req, r
 router.patch('/:id/clinical', protect, authorize('doctor'), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { notes, prescription } = req.body;
+    const { notes, prescription, medicines } = req.body;
 
     const appt = await findAppointmentById(id);
     if (!appt) {
@@ -554,10 +636,27 @@ router.patch('/:id/clinical', protect, authorize('doctor'), async (req, res, nex
       });
     }
 
+    const updateFields = {
+      notes: notes !== undefined ? notes : (appt.notes || ''),
+      prescription: prescription !== undefined ? prescription : (appt.prescription || ''),
+      status: 'completed'
+    };
+    if (Array.isArray(medicines)) {
+      updateFields.medicines = medicines;
+    }
+
+    createNotification({
+      userEmail: appt.patientEmail,
+      title: 'Clinical Summary & Prescription Ready',
+      message: `Dr. ${req.user.name || 'Your doctor'} has completed consultation #${id} and issued your medical prescription.`,
+      type: 'prescription',
+      referenceId: id
+    });
+
     if (mongoose.connection.readyState === 1) {
       const updated = await Appointment.findOneAndUpdate(
         { id }, 
-        { notes: notes || '', prescription: prescription || '', status: 'completed' },
+        updateFields,
         { new: true }
       );
       if (updated) return res.json({ success: true, data: updated });
@@ -566,7 +665,7 @@ router.patch('/:id/clinical', protect, authorize('doctor'), async (req, res, nex
     if (isMysqlConnected()) {
       await dbQuery(
         'UPDATE appointments SET notes = ?, prescription = ?, status = ? WHERE id = ?',
-        [notes || '', prescription || '', 'completed', id]
+        [updateFields.notes, updateFields.prescription, 'completed', id]
       );
       const rows = await dbQuery('SELECT * FROM appointments WHERE id = ?', [id]);
       if (rows.length > 0) return res.json({ success: true, data: rows[0] });
@@ -574,13 +673,87 @@ router.patch('/:id/clinical', protect, authorize('doctor'), async (req, res, nex
 
     const memAppt = memoryStore.appointments.find(a => a.id === id);
     if (memAppt) {
-      if (notes !== undefined) memAppt.notes = notes;
-      if (prescription !== undefined) memAppt.prescription = prescription;
+      memAppt.notes = updateFields.notes;
+      memAppt.prescription = updateFields.prescription;
+      if (Array.isArray(medicines)) memAppt.medicines = medicines;
       memAppt.status = 'completed';
       return res.json({ success: true, data: memAppt });
     }
 
     res.status(404).json({ success: false, error: 'Appointment not found' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/appointments/:id/reports (Attach diagnostic lab reports/scans to appointment)
+router.post('/:id/reports', protect, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { title, fileData, fileType } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, error: 'Report title is required' });
+    }
+
+    const appt = await findAppointmentById(id);
+    if (!appt) {
+      return res.status(404).json({ success: false, error: 'Appointment not found' });
+    }
+
+    // Ownership check: patient can upload to own appt, assigned doctor can upload, admin can upload
+    const isPatient = appt.patientEmail.toLowerCase() === req.user.email.toLowerCase();
+    const isAssignedDoctor = req.user.doctorId && appt.doctorId === req.user.doctorId;
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isPatient && !isAssignedDoctor && !isAdmin) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Forbidden: You are not authorized to attach reports to this appointment' 
+      });
+    }
+
+    const newReport = {
+      id: 'rep-' + Date.now(),
+      title: title.trim(),
+      fileData: fileData || '',
+      fileType: fileType || 'application/pdf',
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: req.user.email
+    };
+
+    if (mongoose.connection.readyState === 1) {
+      const updated = await Appointment.findOneAndUpdate(
+        { id },
+        { $push: { reports: newReport } },
+        { new: true }
+      );
+      createNotification({
+        userEmail: isPatient ? (appt.doctorEmail || 'doctor@demo.com') : appt.patientEmail,
+        title: 'New Diagnostic Report Uploaded',
+        message: `${req.user.name || req.user.email} uploaded report "${title.trim()}" for appointment #${id}.`,
+        type: 'system',
+        referenceId: id
+      });
+      return res.status(201).json({ success: true, message: 'Report attached successfully', data: updated });
+    }
+
+    // Memory / MySQL store
+    const memAppt = memoryStore.appointments.find(a => a.id === id);
+    if (memAppt) {
+      if (!memAppt.reports) memAppt.reports = [];
+      memAppt.reports.push(newReport);
+    }
+
+    createNotification({
+      userEmail: isPatient ? (appt.doctorEmail || 'doctor@demo.com') : appt.patientEmail,
+      title: 'New Diagnostic Report Uploaded',
+      message: `${req.user.name || req.user.email} uploaded report "${title.trim()}" for appointment #${id}.`,
+      type: 'system',
+      referenceId: id
+    });
+
+    res.status(201).json({ success: true, message: 'Report attached successfully', data: memAppt || appt });
   } catch (err) {
     next(err);
   }
